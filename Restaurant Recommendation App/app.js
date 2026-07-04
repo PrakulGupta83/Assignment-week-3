@@ -1,25 +1,30 @@
 /* =========================================================================
    TableTuner — smart restaurant recommender
-   - Wizard: location -> veg/non-veg -> order/dine-in -> cuisine -> ambience
-             -> occasion -> results table
-   - Real nearby restaurants via the free OpenStreetMap Overpass API,
-     with a curated demo fallback when location/network is unavailable.
-   - Learns from the star ratings you give (saved in localStorage) and
-     nudges future suggestions toward what you liked.
+   Helps someone who can't decide WHERE to order from / eat.
+
+   Flow: current location -> veg/non-veg (slider) -> order/dine-in (buttons)
+         -> cuisines (ranked by preference) -> ambience (dine-in only)
+         -> occasion (incl. period comfort + cravings) -> one confident pick.
+
+   Nearby places come from the free OpenStreetMap Overpass API using the
+   device's precise location, with a curated demo fallback when location or
+   network is unavailable. For ordering (and for period comfort) results are
+   kept tightly local so you're not sent across the city. Ratings are saved to
+   localStorage and nudge future suggestions.
    ========================================================================= */
 
 /* ---------- App state ---------- */
 const state = {
   location: null,          // { lat, lon, label }
   veg: 50,                 // 0 = veg, 100 = non-veg
-  mode: 50,                // 0 = order/take-away, 100 = dine-in
-  cuisines: new Set(),
+  mode: 'order',           // 'order' (take-away) | 'dinein'
+  cuisinesRanked: [],      // ordered by preference: [0] = 1st choice
   ambience: new Set(),
   occasion: null,
+  cravings: new Set(),     // only meaningful when occasion === 'period'
 };
 
-// Which steps make up the wizard, in order. "ambience" is skipped when the
-// user leans toward take-away rather than dine-in.
+// Wizard order. Ambience is skipped unless the user chose dine-in.
 const ALL_STEPS = ['location', 'veg', 'mode', 'cuisine', 'ambience', 'occasion', 'results'];
 let stepFlow = [...ALL_STEPS];
 let stepPos = 0;
@@ -35,7 +40,7 @@ function loadPrefs() {
   }
 }
 function savePrefs(p) {
-  localStorage.setItem(LS_KEY, JSON.stringify(p));
+  try { localStorage.setItem(LS_KEY, JSON.stringify(p)); } catch {}
 }
 let prefs = loadPrefs();
 
@@ -43,7 +48,7 @@ function renderLearnedNote() {
   const note = document.getElementById('learnedNote');
   const rated = Object.keys(prefs.ratings).length;
   if (rated === 0) {
-    note.textContent = 'No ratings saved yet — rate places after visiting to personalize future picks.';
+    note.textContent = 'No ratings saved yet — rate places after ordering to personalize future picks.';
   } else {
     const top = topLearnedCuisine();
     note.textContent = `Learning from ${rated} rating${rated > 1 ? 's' : ''}` +
@@ -60,15 +65,14 @@ function topLearnedCuisine() {
 
 /* ---------- Step navigation ---------- */
 function computeFlow() {
-  // Skip ambience if user leans toward ordering in (mode < 40).
-  stepFlow = ALL_STEPS.filter(s => !(s === 'ambience' && state.mode < 40));
+  // Ambience only matters for dine-in.
+  stepFlow = ALL_STEPS.filter(s => !(s === 'ambience' && state.mode !== 'dinein'));
 }
 
 function showStep(name) {
   document.querySelectorAll('.step').forEach(el => {
     el.classList.toggle('step-active', el.dataset.step === name);
   });
-  // Progress = position among question steps (exclude location + results).
   const questionSteps = stepFlow.filter(s => s !== 'location' && s !== 'results');
   const idx = questionSteps.indexOf(name);
   const pct = name === 'results' ? 100
@@ -91,7 +95,7 @@ function goPrev() {
   }
 }
 
-/* ---------- Geolocation ---------- */
+/* ---------- Geolocation (device location, high accuracy) ---------- */
 function initLocation() {
   const statusEl = document.getElementById('locationStatus');
   const manualEl = document.getElementById('manualLocation');
@@ -104,7 +108,7 @@ function initLocation() {
     nextBtn.disabled = false;
   }
 
-  function fallbackToManual(reason) {
+  function fallbackToManual() {
     statusEl.classList.add('hidden');
     manualEl.classList.remove('hidden');
     const sel = document.getElementById('cityPreset');
@@ -113,39 +117,36 @@ function initLocation() {
       setLocation(lat, lon, sel.options[sel.selectedIndex].text + ' (chosen)');
     };
     sel.addEventListener('change', apply);
-    apply(); // default to first city so the user can continue
+    apply();
   }
 
-  if (!navigator.geolocation) {
-    fallbackToManual('unsupported');
-    return;
-  }
+  if (!navigator.geolocation) { fallbackToManual(); return; }
   navigator.geolocation.getCurrentPosition(
     async (pos) => {
       const { latitude: lat, longitude: lon } = pos.coords;
-      statusEl.innerHTML = '<div class="spinner"></div><span>Got it! Naming your area…</span>';
+      statusEl.innerHTML = '<div class="spinner"></div><span>Got it! Naming your spot…</span>';
       const label = await reverseGeocode(lat, lon);
-      statusEl.innerHTML = `<span>📍 Using your current location — <strong>${label}</strong></span>`;
+      statusEl.innerHTML = `<span>📍 Using your exact location — <strong>${label}</strong>. We'll only look right around you.</span>`;
       setLocation(lat, lon, label);
     },
-    () => fallbackToManual('denied'),
-    { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+    () => fallbackToManual(),
+    { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
   );
 }
 
 async function reverseGeocode(lat, lon) {
   try {
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=14`;
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=16`;
     const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
     const data = await res.json();
     const a = data.address || {};
-    return a.suburb || a.neighbourhood || a.city_district || a.town || a.city || a.county || 'your area';
+    return a.neighbourhood || a.suburb || a.road || a.city_district || a.town || a.city || a.county || 'your spot';
   } catch {
     return `${lat.toFixed(3)}, ${lon.toFixed(3)}`;
   }
 }
 
-/* ---------- Slider labels ---------- */
+/* ---------- Control labels ---------- */
 function vegLabel(v) {
   if (v <= 20) return '🥗 Strictly veg';
   if (v <= 40) return 'Mostly veg';
@@ -153,44 +154,62 @@ function vegLabel(v) {
   if (v < 80) return 'Mostly non-veg';
   return '🍗 Non-veg it is';
 }
-function modeLabel(v) {
-  if (v <= 20) return '🛵 Take-away / order in';
-  if (v <= 40) return 'Leaning take-away';
-  if (v < 60) return 'No preference';
-  if (v < 80) return 'Leaning dine-in';
-  return '🍷 Dine-in experience';
-}
 
-/* ---------- Cuisine metadata (for demo data + estimates) ---------- */
+// Per-mode UI wording (order vs dine-in).
+const MODE = {
+  order:  { title: "Here's where we'd order from", time: 'Ready in', cta: 'Find it on Maps', badge: 'Order in', word: 'take-away' },
+  dinein: { title: "Here's the table we'd book",   time: 'Reach in', cta: 'Get directions',  badge: 'Dine-in',  word: 'dine-in' },
+};
+
+/* ---------- Cuisine metadata ---------- */
 const CUISINE_LABELS = {
   indian: 'Indian', italian: 'Italian', mexican: 'Mexican', chinese: 'Chinese',
   thai: 'Thai', japanese: 'Japanese', american: 'American', continental: 'Continental',
   cafe: 'Café', dessert: 'Dessert', other: 'Multi-cuisine',
 };
-// Rough per-head bill band (INR) used only when OSM has no price info.
 const CUISINE_BILL = {
   indian: 500, italian: 750, mexican: 650, chinese: 550, thai: 800,
   japanese: 1200, american: 600, continental: 900, cafe: 400, dessert: 300, other: 600,
 };
 
+// Craving shortcuts shown for the "period comfort" occasion.
+const CRAVING_CUISINES = {
+  sweet: ['dessert', 'cafe'],
+  spicy: ['indian', 'mexican', 'thai'],
+  warm: ['thai', 'chinese', 'indian'],
+  cheesy: ['italian', 'american'],
+  cold: ['dessert', 'cafe'],
+  hot: ['cafe'],
+};
+const CRAVING_LABELS = {
+  sweet: 'something sweet', spicy: 'something spicy', warm: 'warm & comforting',
+  cheesy: 'cheesy comfort', cold: 'a cold treat', hot: 'a hot drink',
+};
+
+/* ---------- Locality rules ---------- */
+// Ordering (and period comfort) stay tight around you; dine-in allows travel.
+function localeParams() {
+  const tight = state.mode === 'order' || state.occasion === 'period';
+  if (tight) return { radius: 2500, maxKm: 4, penalty: 11 };
+  return { radius: 4500, maxKm: 18, penalty: 3.5 };
+}
+
 /* ---------- Fetch nearby restaurants ---------- */
-async function fetchNearby(lat, lon) {
+async function fetchNearby(lat, lon, radius) {
   const query = `
     [out:json][timeout:25];
     (
-      node["amenity"~"restaurant|cafe|fast_food"](around:3500,${lat},${lon});
-      way["amenity"~"restaurant|cafe|fast_food"](around:3500,${lat},${lon});
+      node["amenity"~"restaurant|cafe|fast_food"](around:${radius},${lat},${lon});
+      way["amenity"~"restaurant|cafe|fast_food"](around:${radius},${lat},${lon});
     );
-    out center 80;`;
+    out center 90;`;
   const res = await fetch('https://overpass-api.de/api/interpreter', {
     method: 'POST',
     body: 'data=' + encodeURIComponent(query),
   });
   if (!res.ok) throw new Error('overpass ' + res.status);
   const data = await res.json();
-  const places = (data.elements || [])
-    .map(el => normalizeOSM(el))
-    .filter(Boolean);
+  const places = (data.elements || []).map(normalizeOSM).filter(Boolean);
   if (places.length === 0) throw new Error('empty');
   return places;
 }
@@ -203,7 +222,6 @@ function normalizeOSM(el) {
   if (lat == null || lon == null) return null;
 
   const cuisine = mapCuisine(t.cuisine, t.amenity);
-  // veg score of the place: 0 veg -> 100 non-veg
   let vegScore = 55;
   if (t['diet:vegetarian'] === 'only' || t['diet:vegan'] === 'only') vegScore = 5;
   else if (t['diet:vegetarian'] === 'yes') vegScore = 35;
@@ -243,10 +261,8 @@ function mapCuisine(raw, amenity) {
 }
 
 function estimateBill(t, cuisine) {
-  // OSM sometimes carries a price band via `price` or currency tags; otherwise
-  // fall back to a cuisine heuristic with a small deterministic wobble.
   const base = CUISINE_BILL[cuisine] || 600;
-  const wobble = (hash(t.name || '') % 5 - 2) * 60; // -120..+120, stable per name
+  const wobble = (hash(t.name || '') % 5 - 2) * 60;
   return Math.max(150, Math.round((base + wobble) / 50) * 50);
 }
 
@@ -265,23 +281,25 @@ function hash(s) {
   return Math.abs(h);
 }
 
-/* ---------- Demo fallback dataset (relative to chosen location) ---------- */
+/* ---------- Demo fallback dataset (kept close to the user) ---------- */
 function demoData(lat, lon) {
+  // Small deltas so distances stay under ~1.5 km — reads as "around you".
   const seed = [
-    ['Spice Route', 'indian', 0.006, 0.004, 15, 75, 550, ['family', 'casual']],
-    ['Curry Leaf Kitchen', 'indian', -0.004, 0.008, 8, 30, 350, ['casual']],
-    ['Bella Napoli', 'italian', 0.010, -0.003, 25, 80, 800, ['romantic', 'finedining']],
-    ['Pasta & Co.', 'italian', -0.007, -0.006, 35, 55, 650, ['casual', 'family']],
-    ['El Toro Cantina', 'mexican', 0.003, 0.011, 45, 70, 700, ['lively', 'friends']],
-    ['Taco Fiesta', 'mexican', -0.009, 0.002, 20, 25, 400, ['casual']],
-    ['Golden Dragon', 'chinese', 0.012, 0.006, 60, 65, 600, ['family']],
-    ['Bangkok Bowl', 'thai', -0.002, -0.010, 15, 45, 750, ['quiet', 'romantic']],
-    ['Sakura Sushi', 'japanese', 0.008, 0.009, 90, 85, 1300, ['finedining', 'quiet']],
-    ['The Grill House', 'american', -0.011, 0.004, 30, 75, 700, ['lively', 'friends']],
-    ['Corner Café', 'cafe', 0.002, -0.002, 30, 40, 350, ['quiet', 'outdoor']],
-    ['Sweet Symphony', 'dessert', 0.004, 0.003, 20, 35, 300, ['casual', 'family']],
-    ['The Terrace', 'continental', 0.009, -0.008, 55, 88, 1100, ['outdoor', 'romantic', 'finedining']],
-    ['Rooftop Social', 'continental', -0.006, 0.010, 40, 80, 950, ['outdoor', 'lively']],
+    ['Spice Route', 'indian', 0.004, 0.003, 15, 75, 550, ['family', 'casual']],
+    ['Curry Leaf Kitchen', 'indian', -0.003, 0.005, 8, 30, 350, ['casual']],
+    ['Bella Napoli', 'italian', 0.006, -0.002, 25, 80, 800, ['romantic', 'finedining']],
+    ['Pasta & Co.', 'italian', -0.004, -0.004, 35, 55, 650, ['casual', 'family']],
+    ['El Toro Cantina', 'mexican', 0.002, 0.006, 45, 70, 700, ['lively', 'friends']],
+    ['Taco Fiesta', 'mexican', -0.005, 0.002, 20, 25, 400, ['casual']],
+    ['Golden Dragon', 'chinese', 0.007, 0.004, 60, 65, 600, ['family']],
+    ['Bangkok Bowl', 'thai', -0.002, -0.006, 15, 45, 750, ['quiet', 'romantic']],
+    ['Sakura Sushi', 'japanese', 0.005, 0.005, 90, 85, 1300, ['finedining', 'quiet']],
+    ['The Grill House', 'american', -0.006, 0.003, 30, 75, 700, ['lively', 'friends']],
+    ['Corner Café', 'cafe', 0.001, -0.001, 30, 40, 350, ['quiet', 'outdoor']],
+    ['Sweet Symphony', 'dessert', 0.003, 0.002, 20, 35, 300, ['casual', 'family']],
+    ['Gelato Bar', 'dessert', -0.002, 0.003, 25, 40, 280, ['casual']],
+    ['The Terrace', 'continental', 0.005, -0.005, 55, 88, 1100, ['outdoor', 'romantic', 'finedining']],
+    ['Rooftop Social', 'continental', -0.004, 0.006, 40, 80, 950, ['outdoor', 'lively']],
   ];
   return seed.map((r, i) => {
     const [name, cuisine, dLat, dLon, veg, dineIn, bill, amb] = r;
@@ -306,46 +324,60 @@ function haversineKm(lat1, lon1, lat2, lon2) {
     Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
-function travelMinutes(km, dineIn) {
-  // ~22 km/h effective city speed; take-away adds ~12 min prep/handoff.
+function travelMinutes(km, isTakeaway) {
+  // ~22 km/h effective city speed; ordering adds ~12 min prep/handoff.
   const drive = (km / 22) * 60;
-  return Math.max(4, Math.round(drive + (dineIn ? 0 : 12)));
+  return Math.max(4, Math.round(drive + (isTakeaway ? 12 : 0)));
 }
 
 /* ---------- Scoring ---------- */
-function scorePlace(p, dist) {
+function scorePlace(p, dist, penalty) {
   let score = 100;
 
-  // Veg preference alignment (0..100 distance between user & place).
+  // Veg preference alignment.
   score -= Math.abs(state.veg - p.vegScore) * 0.35;
 
-  // Mode alignment.
-  score -= Math.abs(state.mode - p.dineInScore) * 0.25;
+  // Mode alignment: for ordering, dine-in-only places are less ideal; for
+  // dine-in, take-away-only places are less ideal.
+  if (state.mode === 'order') score -= p.dineInScore * 0.18;
+  else score -= (100 - p.dineInScore) * 0.15;
 
-  // Cuisine match (explicit selection is a strong signal).
-  if (state.cuisines.size > 0) {
-    score += state.cuisines.has(p.cuisine) ? 30 : -35;
+  // Ranked cuisine: earlier preference => bigger boost; unlisted => penalty.
+  if (state.cuisinesRanked.length) {
+    const r = state.cuisinesRanked.indexOf(p.cuisine);
+    if (r === 0) score += 34;
+    else if (r === 1) score += 22;
+    else if (r === 2) score += 14;
+    else if (r > 2) score += 8;
+    else score -= 30;
   }
 
-  // Ambience match (only meaningful for dine-in).
-  if (state.mode >= 40 && state.ambience.size > 0) {
+  // Ambience match (dine-in only).
+  if (state.mode === 'dinein' && state.ambience.size) {
     const overlap = [...state.ambience].filter(a => p.ambience.has(a)).length;
     score += overlap * 12;
   }
 
   // Occasion → budget fit.
-  const target = occasionBudget(state.occasion);
-  score -= Math.abs(p.bill - target) / 40;
+  score -= Math.abs(p.bill - occasionBudget(state.occasion)) / 40;
 
-  // Distance penalty.
-  score -= dist * 4;
+  // Period comfort: nudge toward comforting cuisines and any craving picked.
+  if (state.occasion === 'period') {
+    const comfort = { dessert: 20, cafe: 14, indian: 14, italian: 13, chinese: 11, thai: 8 };
+    score += comfort[p.cuisine] || 0;
+    for (const c of state.cravings) {
+      if ((CRAVING_CUISINES[c] || []).includes(p.cuisine)) score += 12;
+    }
+  }
+
+  // Distance penalty (steeper for ordering / period so it stays local).
+  score -= dist * penalty;
 
   // Learned preferences.
   score += (prefs.cuisine[p.cuisine] || 0) * 6;
-  if (state.mode >= 40) {
+  if (state.mode === 'dinein') {
     for (const a of p.ambience) score += (prefs.ambience[a] || 0) * 3;
   }
-  // Places you personally rated well get a direct boost.
   if (prefs.ratings[p.name]) score += (prefs.ratings[p.name] - 3) * 8;
 
   return score;
@@ -354,11 +386,19 @@ function scorePlace(p, dist) {
 function occasionBudget(occ) {
   return {
     everyday: 400, quick: 300, friends: 600, family: 700,
-    date: 900, business: 1000, celebration: 1200,
+    date: 900, business: 1000, celebration: 1200, period: 450,
   }[occ] || 600;
 }
 
-/* ---------- Results rendering ---------- */
+function occasionText(o) {
+  return {
+    everyday: 'an everyday meal', date: 'a date night', family: 'a family gathering',
+    friends: 'friends', business: 'a business meal', celebration: 'a celebration',
+    quick: 'a quick bite', period: 'some comfort right now',
+  }[o] || o;
+}
+
+/* ---------- Results ---------- */
 async function runRecommendation() {
   stepPos = stepFlow.indexOf('results');
   showStep('results');
@@ -367,7 +407,6 @@ async function runRecommendation() {
   const noResults = document.getElementById('noResults');
   loading.classList.remove('hidden');
   noResults.classList.add('hidden');
-  // Reset the "see all" drawer to collapsed for each new search.
   const allWrap = document.getElementById('allWrap');
   const toggleAll = document.getElementById('toggleAll');
   allWrap.classList.add('hidden');
@@ -375,25 +414,28 @@ async function runRecommendation() {
   toggleAll.textContent = 'See all nearby options ▾';
 
   const { lat, lon } = state.location;
+  const lp = localeParams();
   let places, usedDemo = false;
   try {
-    document.getElementById('loadingText').textContent = 'Scanning restaurants near you…';
-    places = await fetchNearby(lat, lon);
+    document.getElementById('loadingText').textContent = 'Looking right around you…';
+    places = await fetchNearby(lat, lon, lp.radius);
   } catch (e) {
     usedDemo = true;
     places = demoData(lat, lon);
   }
 
-  // Score + sort.
-  const wantDineIn = state.mode >= 40;
-  const ranked = places.map(p => {
+  const isTakeaway = state.mode === 'order';
+  let ranked = places.map(p => {
     const dist = haversineKm(lat, lon, p.lat, p.lon);
-    const mins = travelMinutes(dist, wantDineIn ? 1 : 0);
-    const score = scorePlace(p, dist);
+    const mins = travelMinutes(dist, isTakeaway);
+    const score = scorePlace(p, dist, lp.penalty);
     return { ...p, dist, mins, score };
   }).sort((a, b) => b.score - a.score);
 
-  // Normalize a friendly 0-100 "match" for display.
+  // Enforce locality — but never show an empty screen.
+  const near = ranked.filter(p => p.dist <= lp.maxKm);
+  if (near.length >= 1) ranked = near;
+
   const max = ranked.length ? ranked[0].score : 1;
   const min = ranked.length ? ranked[ranked.length - 1].score : 0;
   const range = Math.max(1, max - min);
@@ -408,21 +450,16 @@ async function runRecommendation() {
   }
   document.getElementById('pickArea').classList.remove('hidden');
 
-  // Lead with one confident pick + up to two backups; full list stays hidden.
-  renderPick(ranked, min, range, wantDineIn);
-  renderTable(top, max, range, min, wantDineIn);
+  renderPick(ranked, min, range);
+  renderTable(top, max, range, min);
 
-  document.getElementById('resultsTitle').textContent = wantDineIn
-    ? "Here's the table we'd book"
-    : "Here's where we'd order from";
+  document.getElementById('resultsTitle').textContent = MODE[state.mode].title;
 
-  const summary = document.getElementById('resultsSummary');
-  const bits = [];
-  bits.push(vegLabel(state.veg));
-  bits.push(wantDineIn ? 'dine-in' : 'take-away');
-  if (state.cuisines.size) bits.push([...state.cuisines].map(c => CUISINE_LABELS[c]).join(', '));
+  const bits = [vegLabel(state.veg), MODE[state.mode].word];
+  if (state.cuisinesRanked.length) bits.push(state.cuisinesRanked.map(c => CUISINE_LABELS[c]).join(' → '));
   if (state.occasion) bits.push('for ' + occasionText(state.occasion));
-  summary.textContent = `Based on your mood · ${bits.join(' · ')} · near ${state.location.label}` +
+  document.getElementById('resultsSummary').textContent =
+    `Based on your mood · ${bits.join(' · ')} · near ${state.location.label}` +
     (usedDemo ? '  (showing sample data — live lookup unavailable)' : '');
 }
 
@@ -437,68 +474,65 @@ const AMB_WORD = {
 };
 
 /* Plain-language "why this one" so an undecided user can trust the pick. */
-function buildReason(p, wantDineIn) {
+function buildReason(p) {
   const parts = [];
-  if (state.cuisines.size && state.cuisines.has(p.cuisine)) {
-    parts.push(`it's the <strong>${p.cuisineLabel}</strong> you were craving`);
-  } else {
-    parts.push(`the <strong>${p.cuisineLabel}</strong> here fits your mood`);
-  }
-  if (state.veg <= 40 && p.vegScore <= 45) parts.push('it leans veg, like you wanted');
-  else if (state.veg >= 60 && p.vegScore >= 55) parts.push('there\'s plenty non-veg on the menu');
+  const r = state.cuisinesRanked.indexOf(p.cuisine);
+  if (r === 0) parts.push(`it's your top pick, <strong>${p.cuisineLabel}</strong>`);
+  else if (r > 0) parts.push(`it serves the <strong>${p.cuisineLabel}</strong> you listed`);
+  else parts.push(`the <strong>${p.cuisineLabel}</strong> here fits your mood`);
 
-  if (wantDineIn && state.ambience.size) {
+  if (state.veg <= 40 && p.vegScore <= 45) parts.push('it leans veg, like you wanted');
+  else if (state.veg >= 60 && p.vegScore >= 55) parts.push("there's plenty non-veg on the menu");
+
+  if (state.mode === 'dinein' && state.ambience.size) {
     const overlap = [...state.ambience].filter(a => p.ambience.has(a));
     if (overlap.length) parts.push(`it has the ${AMB_WORD[overlap[0]] || overlap[0]} vibe you picked`);
   }
-  if (state.occasion) parts.push(`it's right for ${occasionText(state.occasion)}`);
-  parts.push(wantDineIn
-    ? `and it's an easy <strong>${p.dist.toFixed(1)} km</strong> away`
-    : `and it's close by (<strong>${p.dist.toFixed(1)} km</strong>), so it'll arrive hot`);
 
-  // First clause capitalized, joined naturally.
-  const first = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
-  const rest = parts.slice(1);
-  return 'Because ' + [first.charAt(0).toLowerCase() + first.slice(1), ...rest]
-    .join(', ').replace(/, and /, ' — and ') + '.';
+  if (state.occasion === 'period') {
+    const crav = [...state.cravings].map(c => CRAVING_LABELS[c]);
+    parts.push(crav.length ? `it's comfort food for ${crav.join(' & ')}` : "it's easy comfort food");
+  } else if (state.occasion) {
+    parts.push(`it's right for ${occasionText(state.occasion)}`);
+  }
+
+  parts.push(state.mode === 'order'
+    ? `and it's close by (<strong>${p.dist.toFixed(1)} km</strong>), so it'll arrive hot`
+    : `and it's an easy <strong>${p.dist.toFixed(1)} km</strong> away`);
+
+  return 'Because ' + parts.join(', ').replace(/, and /, ' — and ') + '.';
 }
 
 /* Render the hero pick and up to two compact alternates. */
-function renderPick(ranked, min, range, wantDineIn) {
+function renderPick(ranked, min, range) {
   const hero = ranked[0];
   const heroEl = document.getElementById('topPick');
   const match = matchPct(hero.score, min, range);
-  const mapUrl = mapsLink(hero);
-  const modeBadge = wantDineIn
-    ? '<span class="badge dinein">Dine-in</span>'
-    : '<span class="badge order">Order in</span>';
-  const timeLabel = wantDineIn ? 'Reach in' : 'Ready in';
-  const ctaLabel = wantDineIn ? 'Get directions' : 'Find it on Maps';
+  const badgeClass = state.mode === 'order' ? 'order' : 'dinein';
 
   heroEl.innerHTML = `
     <div class="pick-badge">✨ Our pick for you</div>
     <div class="pick-title">${escapeHtml(hero.name)}</div>
     <div class="pick-tags">
       <span class="badge">${hero.cuisineLabel}</span>
-      ${modeBadge}
+      <span class="badge ${badgeClass}">${MODE[state.mode].badge}</span>
       <span class="badge">${match}% match</span>
     </div>
-    <p class="pick-reason">${buildReason(hero, wantDineIn)}</p>
+    <p class="pick-reason">${buildReason(hero)}</p>
     <div class="pick-stats">
       <div class="pick-stat"><span class="stat-label">Distance</span><span class="stat-val">${hero.dist.toFixed(1)} km</span></div>
-      <div class="pick-stat"><span class="stat-label">${timeLabel}</span><span class="stat-val">~${hero.mins} min</span></div>
+      <div class="pick-stat"><span class="stat-label">${MODE[state.mode].time}</span><span class="stat-val">~${hero.mins} min</span></div>
       <div class="pick-stat"><span class="stat-label">Avg bill</span><span class="stat-val">₹${hero.bill}<span style="font-size:12px;font-weight:400;color:var(--muted)">/person</span></span></div>
     </div>
     <div class="pick-actions">
-      <a class="btn btn-primary" href="${mapUrl}" target="_blank" rel="noopener">${ctaLabel} ↗</a>
+      <a class="btn btn-primary" href="${mapsLink(hero)}" target="_blank" rel="noopener">${MODE[state.mode].cta} ↗</a>
       <div class="pick-rate">
-        <span class="rate-label">Ordered here? Rate it:</span>
+        <span class="rate-label">${state.mode === 'order' ? 'Ordered' : 'Been'} here? Rate it:</span>
         <div class="stars" data-name="${escapeHtml(hero.name)}" data-cuisine="${hero.cuisine}"></div>
       </div>
     </div>`;
   renderStars(heroEl.querySelector('.stars'), prefs.ratings[hero.name] || 0);
 
-  // Alternates
   const alts = ranked.slice(1, 3);
   const wrap = document.getElementById('alternatesWrap');
   const altBox = document.getElementById('alternates');
@@ -528,24 +562,13 @@ function mapsLink(p) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name)}%20${p.lat},${p.lon}`;
 }
 
-function occasionText(o) {
-  return {
-    everyday: 'an everyday meal', date: 'a date night', family: 'a family gathering',
-    friends: 'friends', business: 'a business meal', celebration: 'a celebration', quick: 'a quick bite',
-  }[o] || o;
-}
-
-function renderTable(list, max, range, min, wantDineIn) {
+function renderTable(list, max, range, min) {
   const body = document.getElementById('resultsBody');
   body.innerHTML = '';
+  const badgeClass = state.mode === 'order' ? 'order' : 'dinein';
   list.forEach((p, i) => {
-    const match = Math.round(((p.score - min) / range) * 45 + 55); // map to 55-100
-    const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name)}%20${p.lat},${p.lon}`;
-    const modeBadge = wantDineIn
-      ? '<span class="badge dinein">Dine-in</span>'
-      : '<span class="badge order">Order</span>';
+    const match = matchPct(p.score, min, range);
     const savedRating = prefs.ratings[p.name] || 0;
-
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${i + 1}</td>
@@ -554,7 +577,7 @@ function renderTable(list, max, range, min, wantDineIn) {
         <div class="rest-sub">${p.source === 'demo' ? 'sample' : 'nearby'}</div>
       </td>
       <td><span class="badge">${p.cuisineLabel}</span></td>
-      <td>${modeBadge}</td>
+      <td><span class="badge ${badgeClass}">${MODE[state.mode].badge}</span></td>
       <td>${p.dist.toFixed(1)} km</td>
       <td>${p.mins} min</td>
       <td>₹${p.bill}/person</td>
@@ -564,7 +587,7 @@ function renderTable(list, max, range, min, wantDineIn) {
           <span>${match}%</span>
         </div>
       </td>
-      <td><a class="map-link" href="${mapUrl}" target="_blank" rel="noopener">Open ↗</a></td>
+      <td><a class="map-link" href="${mapsLink(p)}" target="_blank" rel="noopener">Open ↗</a></td>
       <td><div class="stars" data-name="${escapeHtml(p.name)}" data-cuisine="${p.cuisine}"></div></td>
     `;
     body.appendChild(tr);
@@ -591,14 +614,11 @@ function recordRating(name, cuisine, stars) {
   const prev = prefs.ratings[name] || 0;
   prefs.ratings[name] = stars;
 
-  // Adjust cuisine/ambience weights: high stars (4-5) push up, low (1-2) push down.
-  const delta = (stars - 3); // -2..+2
+  const delta = (stars - 3);
   const prevDelta = prev ? (prev - 3) : 0;
   const net = delta - prevDelta;
 
   prefs.cuisine[cuisine] = clamp((prefs.cuisine[cuisine] || 0) + net * 0.5, -5, 5);
-
-  // Ambience learning: attribute to currently selected ambience prefs.
   for (const a of state.ambience) {
     prefs.ambience[a] = clamp((prefs.ambience[a] || 0) + net * 0.3, -5, 5);
   }
@@ -621,7 +641,7 @@ function toast(msg) {
     el.id = 'toast';
     el.style.cssText =
       'position:fixed;left:50%;bottom:28px;transform:translateX(-50%);' +
-      'background:#262845;border:1px solid #2e3155;color:#eef0ff;padding:12px 20px;' +
+      'background:#262a45;border:1px solid #2f3358;color:#eef0ff;padding:12px 20px;' +
       'border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.4);z-index:99;' +
       'font-size:14px;transition:opacity .3s;opacity:0;';
     document.body.appendChild(el);
@@ -640,20 +660,60 @@ function escapeHtml(s) {
 function capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
 
 /* ---------- Wiring ---------- */
-function wireChips(containerId, targetSet, single) {
+function wireMultiChips(containerId, targetSet) {
   const container = document.getElementById(containerId);
   container.addEventListener('click', (e) => {
     const chip = e.target.closest('.chip');
     if (!chip) return;
-    if (single) {
-      container.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
-      chip.classList.add('selected');
-      state.occasion = chip.dataset.value;
+    chip.classList.toggle('selected');
+    const val = chip.dataset.value;
+    if (targetSet.has(val)) targetSet.delete(val); else targetSet.add(val);
+  });
+}
+
+// Cuisines: each click appends to the ranked list; clicking again removes and
+// renumbers. The badge on each selected chip shows its preference order.
+function wireCuisineRanking() {
+  const container = document.getElementById('cuisineChips');
+  container.addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    const val = chip.dataset.value;
+    const i = state.cuisinesRanked.indexOf(val);
+    if (i === -1) state.cuisinesRanked.push(val);
+    else state.cuisinesRanked.splice(i, 1);
+    renderCuisineRanks();
+  });
+}
+function renderCuisineRanks() {
+  document.querySelectorAll('#cuisineChips .chip').forEach(chip => {
+    const r = state.cuisinesRanked.indexOf(chip.dataset.value);
+    chip.classList.toggle('selected', r !== -1);
+    let badge = chip.querySelector('.rank');
+    if (r === -1) {
+      if (badge) badge.remove();
     } else {
-      chip.classList.toggle('selected');
-      const val = chip.dataset.value;
-      if (targetSet.has(val)) targetSet.delete(val);
-      else targetSet.add(val);
+      if (!badge) { badge = document.createElement('span'); badge.className = 'rank'; chip.prepend(badge); }
+      badge.textContent = String(r + 1);
+    }
+  });
+}
+
+function wireOccasion() {
+  const container = document.getElementById('occasionChips');
+  const cravingBlock = document.getElementById('cravingBlock');
+  container.addEventListener('click', (e) => {
+    const chip = e.target.closest('.chip');
+    if (!chip) return;
+    container.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
+    chip.classList.add('selected');
+    state.occasion = chip.dataset.value;
+    if (state.occasion === 'period') {
+      cravingBlock.classList.remove('hidden');
+    } else {
+      cravingBlock.classList.add('hidden');
+      state.cravings.clear();
+      document.querySelectorAll('#cravingChips .chip').forEach(c => c.classList.remove('selected'));
     }
   });
 }
@@ -662,26 +722,32 @@ function init() {
   initLocation();
   renderLearnedNote();
 
-  // Sliders
+  // Veg slider
   const vegSlider = document.getElementById('vegSlider');
   const vegValue = document.getElementById('vegValue');
   vegSlider.addEventListener('input', () => {
     state.veg = +vegSlider.value;
     vegValue.textContent = vegLabel(state.veg);
   });
-  const modeSlider = document.getElementById('modeSlider');
-  const modeValue = document.getElementById('modeValue');
-  modeSlider.addEventListener('input', () => {
-    state.mode = +modeSlider.value;
-    modeValue.textContent = modeLabel(state.mode);
+
+  // Mode segmented buttons
+  const modeSeg = document.getElementById('modeSegmented');
+  modeSeg.addEventListener('click', (e) => {
+    const btn = e.target.closest('.seg-btn');
+    if (!btn) return;
+    modeSeg.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('is-active'));
+    btn.classList.add('is-active');
+    state.mode = btn.dataset.value;
+    computeFlow();
   });
 
   // Chips
-  wireChips('cuisineChips', state.cuisines, false);
-  wireChips('ambienceChips', state.ambience, false);
-  wireChips('occasionChips', null, true);
+  wireCuisineRanking();
+  wireMultiChips('ambienceChips', state.ambience);
+  wireMultiChips('cravingChips', state.cravings);
+  wireOccasion();
 
-  // Nav buttons
+  // Nav
   document.querySelectorAll('[data-next]').forEach(b => b.addEventListener('click', goNext));
   document.querySelectorAll('[data-prev]').forEach(b => b.addEventListener('click', goPrev));
 

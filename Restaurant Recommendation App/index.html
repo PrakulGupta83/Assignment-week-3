@@ -73,18 +73,22 @@
         </div>
       </section>
 
-      <!-- Step 2: Order / Dine-in (slider) -->
+      <!-- Step 2: Order / Dine-in (buttons) -->
       <section class="step" data-step="mode">
         <div class="step-index">Question 2 of 5</div>
         <h2>Order in or dine-in?</h2>
-        <p class="muted">Slide left to order/take-away, right for a dine-in experience.</p>
-        <div class="slider-block">
-          <div class="slider-ends">
-            <span class="slider-end left">🛵 Order / Take-away</span>
-            <span class="slider-end right">🍷 Dine-in</span>
-          </div>
-          <input type="range" min="0" max="100" value="50" class="slider" id="modeSlider" />
-          <div class="slider-value" id="modeValue">No preference</div>
+        <p class="muted">How do you want to eat this time?</p>
+        <div class="segmented" id="modeSegmented" role="group" aria-label="Order in or dine-in">
+          <button class="seg-btn is-active" data-value="order">
+            <span class="seg-emoji">🛵</span>
+            <span class="seg-title">Order in</span>
+            <small>Delivery / take-away, stay home</small>
+          </button>
+          <button class="seg-btn" data-value="dinein">
+            <span class="seg-emoji">🍷</span>
+            <span class="seg-title">Dine-in</span>
+            <small>Head out and eat there</small>
+          </button>
         </div>
         <div class="step-nav">
           <button class="btn btn-ghost" data-prev>← Back</button>
@@ -92,11 +96,12 @@
         </div>
       </section>
 
-      <!-- Step 3: Food type preference (multi) -->
+      <!-- Step 3: Food type preference (ranked) -->
       <section class="step" data-step="cuisine">
         <div class="step-index">Question 3 of 5</div>
         <h2>What are you craving?</h2>
-        <p class="muted">Pick one or more cuisines (or skip to see everything nearby).</p>
+        <p class="muted">Tap cuisines in order of preference.</p>
+        <p class="hint">Your <strong>first tap = 1st choice</strong>, next tap = 2nd, and so on. Tap again to remove. Skip if anything's fine.</p>
         <div class="chips" id="cuisineChips">
           <button class="chip" data-value="indian">🇮🇳 Indian</button>
           <button class="chip" data-value="italian">🍝 Italian</button>
@@ -142,16 +147,31 @@
         <p class="muted">This helps us tune the budget and vibe of the suggestions.</p>
         <div class="chips chips-single" id="occasionChips">
           <button class="chip" data-value="everyday">🍴 Everyday meal</button>
-          <button class="chip" data-value="date">💑 Date night</button>
-          <button class="chip" data-value="family">🎂 Family gathering</button>
+          <button class="chip" data-value="period">🌸 Period comfort</button>
+          <button class="chip" data-value="quick">⚡ Quick bite</button>
           <button class="chip" data-value="friends">🍻 Hanging with friends</button>
+          <button class="chip" data-value="family">🎂 Family gathering</button>
+          <button class="chip" data-value="date">💑 Date night</button>
           <button class="chip" data-value="business">💼 Business meal</button>
           <button class="chip" data-value="celebration">🥂 Celebration</button>
-          <button class="chip" data-value="quick">⚡ Quick bite</button>
         </div>
+
+        <!-- Craving shortcut, shown only for period comfort -->
+        <div class="craving-block hidden" id="cravingBlock">
+          <p class="craving-title">🌸 What would comfort you right now? <span style="color:var(--muted);font-weight:400">(optional, pick any)</span></p>
+          <div class="chips" id="cravingChips">
+            <button class="chip" data-value="sweet">🍫 Something sweet</button>
+            <button class="chip" data-value="spicy">🌶️ Something spicy</button>
+            <button class="chip" data-value="warm">🍜 Warm &amp; comforting</button>
+            <button class="chip" data-value="cheesy">🧀 Cheesy comfort</button>
+            <button class="chip" data-value="cold">🍦 A cold treat</button>
+            <button class="chip" data-value="hot">☕ A hot drink</button>
+          </div>
+        </div>
+
         <div class="step-nav">
           <button class="btn btn-ghost" data-prev>← Back</button>
-          <button class="btn btn-primary" id="findBtn">Find restaurants ✨</button>
+          <button class="btn btn-primary" id="findBtn">Find my spot ✨</button>
         </div>
       </section>
 
