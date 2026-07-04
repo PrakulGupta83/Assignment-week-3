@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TableTuner — Smart Restaurant Recommender</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">🍽️</span>
+        <div>
+          <h1>TableTuner</h1>
+          <p class="tagline">Answer a few quick questions — we'll find your table.</p>
+        </div>
+      </div>
+      <div class="location-chip" id="locationChip" title="Your current location">
+        <span class="dot"></span>
+        <span id="locationLabel">Locating…</span>
+      </div>
+    </header>
+
+    <!-- Progress bar -->
+    <div class="progress">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <main class="wizard" id="wizard">
+      <!-- Step: Location intro -->
+      <section class="step step-active" data-step="location">
+        <h2>Let's start with where you are</h2>
+        <p class="muted">We use your current location to measure distance and travel time to each place. Nothing is uploaded — it stays in your browser.</p>
+        <div class="location-status" id="locationStatus">
+          <div class="spinner"></div>
+          <span>Requesting your location…</span>
+        </div>
+        <div class="manual-location hidden" id="manualLocation">
+          <p class="muted">Couldn't read your location automatically. Pick a starting point:</p>
+          <select id="cityPreset">
+            <option value="28.6139,77.2090">New Delhi</option>
+            <option value="19.0760,72.8777">Mumbai</option>
+            <option value="12.9716,77.5946">Bengaluru</option>
+            <option value="13.0827,80.2707">Chennai</option>
+            <option value="22.5726,88.3639">Kolkata</option>
+            <option value="17.3850,78.4867">Hyderabad</option>
+            <option value="18.5204,73.8567">Pune</option>
+          </select>
+        </div>
+        <div class="step-nav">
+          <span></span>
+          <button class="btn btn-primary" data-next disabled id="locationNext">Continue →</button>
+        </div>
+      </section>
+
+      <!-- Step 1: Veg / Non-veg (slider) -->
+      <section class="step" data-step="veg">
+        <div class="step-index">Question 1 of 5</div>
+        <h2>Veg or Non-veg?</h2>
+        <p class="muted">Slide toward whatever you're in the mood for. The middle means "either is fine".</p>
+        <div class="slider-block">
+          <div class="slider-ends">
+            <span class="slider-end left">🥗 Veg</span>
+            <span class="slider-end right">🍗 Non-veg</span>
+          </div>
+          <input type="range" min="0" max="100" value="50" class="slider" id="vegSlider" />
+          <div class="slider-value" id="vegValue">Either is fine</div>
+        </div>
+        <div class="step-nav">
+          <button class="btn btn-ghost" data-prev>← Back</button>
+          <button class="btn btn-primary" data-next>Next →</button>
+        </div>
+      </section>
+
+      <!-- Step 2: Order / Dine-in (slider) -->
+      <section class="step" data-step="mode">
+        <div class="step-index">Question 2 of 5</div>
+        <h2>Order in or dine-in?</h2>
+        <p class="muted">Slide left to order/take-away, right for a dine-in experience.</p>
+        <div class="slider-block">
+          <div class="slider-ends">
+            <span class="slider-end left">🛵 Order / Take-away</span>
+            <span class="slider-end right">🍷 Dine-in</span>
+          </div>
+          <input type="range" min="0" max="100" value="50" class="slider" id="modeSlider" />
+          <div class="slider-value" id="modeValue">No preference</div>
+        </div>
+        <div class="step-nav">
+          <button class="btn btn-ghost" data-prev>← Back</button>
+          <button class="btn btn-primary" data-next>Next →</button>
+        </div>
+      </section>
+
+      <!-- Step 3: Food type preference (multi) -->
+      <section class="step" data-step="cuisine">
+        <div class="step-index">Question 3 of 5</div>
+        <h2>What are you craving?</h2>
+        <p class="muted">Pick one or more cuisines (or skip to see everything nearby).</p>
+        <div class="chips" id="cuisineChips">
+          <button class="chip" data-value="indian">🇮🇳 Indian</button>
+          <button class="chip" data-value="italian">🍝 Italian</button>
+          <button class="chip" data-value="mexican">🌮 Mexican</button>
+          <button class="chip" data-value="chinese">🥡 Chinese</button>
+          <button class="chip" data-value="thai">🍜 Thai</button>
+          <button class="chip" data-value="japanese">🍣 Japanese</button>
+          <button class="chip" data-value="american">🍔 American</button>
+          <button class="chip" data-value="continental">🍽️ Continental</button>
+          <button class="chip" data-value="cafe">☕ Café</button>
+          <button class="chip" data-value="dessert">🍰 Dessert</button>
+        </div>
+        <div class="step-nav">
+          <button class="btn btn-ghost" data-prev>← Back</button>
+          <button class="btn btn-primary" data-next>Next →</button>
+        </div>
+      </section>
+
+      <!-- Step 4: Ambience (only if dine-in) -->
+      <section class="step" data-step="ambience">
+        <div class="step-index">Question 4 of 5</div>
+        <h2>What kind of vibe?</h2>
+        <p class="muted">Ambience preference for your dine-in. Pick any that fit.</p>
+        <div class="chips" id="ambienceChips">
+          <button class="chip" data-value="romantic">🌹 Romantic</button>
+          <button class="chip" data-value="family">👨‍👩‍👧 Family-friendly</button>
+          <button class="chip" data-value="casual">😎 Casual</button>
+          <button class="chip" data-value="lively">🎉 Lively / Bar</button>
+          <button class="chip" data-value="finedining">✨ Fine dining</button>
+          <button class="chip" data-value="outdoor">🌿 Outdoor / Rooftop</button>
+          <button class="chip" data-value="quiet">🤫 Quiet / Cozy</button>
+        </div>
+        <div class="step-nav">
+          <button class="btn btn-ghost" data-prev>← Back</button>
+          <button class="btn btn-primary" data-next>Next →</button>
+        </div>
+      </section>
+
+      <!-- Step 5: Occasion -->
+      <section class="step" data-step="occasion">
+        <div class="step-index">Question 5 of 5</div>
+        <h2>What's the occasion?</h2>
+        <p class="muted">This helps us tune the budget and vibe of the suggestions.</p>
+        <div class="chips chips-single" id="occasionChips">
+          <button class="chip" data-value="everyday">🍴 Everyday meal</button>
+          <button class="chip" data-value="date">💑 Date night</button>
+          <button class="chip" data-value="family">🎂 Family gathering</button>
+          <button class="chip" data-value="friends">🍻 Hanging with friends</button>
+          <button class="chip" data-value="business">💼 Business meal</button>
+          <button class="chip" data-value="celebration">🥂 Celebration</button>
+          <button class="chip" data-value="quick">⚡ Quick bite</button>
+        </div>
+        <div class="step-nav">
+          <button class="btn btn-ghost" data-prev>← Back</button>
+          <button class="btn btn-primary" id="findBtn">Find restaurants ✨</button>
+        </div>
+      </section>
+
+      <!-- Step: Results -->
+      <section class="step" data-step="results">
+        <div class="results-head">
+          <div>
+            <h2>Your recommendations</h2>
+            <p class="muted" id="resultsSummary"></p>
+          </div>
+          <button class="btn btn-ghost" id="restartBtn">↺ Start over</button>
+        </div>
+
+        <div class="loading-results hidden" id="loadingResults">
+          <div class="spinner"></div>
+          <span id="loadingText">Scanning restaurants near you…</span>
+        </div>
+
+        <div class="table-wrap">
+          <table class="results-table" id="resultsTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Restaurant</th>
+                <th>Cuisine</th>
+                <th>Mode</th>
+                <th>Distance</th>
+                <th>Time</th>
+                <th>Avg bill</th>
+                <th>Match</th>
+                <th>Map</th>
+                <th>Your rating</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody"></tbody>
+          </table>
+        </div>
+        <p class="no-results hidden" id="noResults">No matching places found nearby. Try widening your preferences or picking a different starting point.</p>
+        <p class="disclaimer">Travel time and average bill are estimates. Ratings you give are saved in your browser and quietly tune future suggestions toward what you like.</p>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span id="learnedNote"></span>
+      <button class="btn-link" id="resetLearning">Reset saved preferences</button>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
