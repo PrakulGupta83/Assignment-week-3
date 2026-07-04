@@ -159,7 +159,7 @@
       <section class="step" data-step="results">
         <div class="results-head">
           <div>
-            <h2>Your recommendations</h2>
+            <h2 id="resultsTitle">Here's where we'd order from</h2>
             <p class="muted" id="resultsSummary"></p>
           </div>
           <button class="btn btn-ghost" id="restartBtn">↺ Start over</button>
@@ -167,28 +167,42 @@
 
         <div class="loading-results hidden" id="loadingResults">
           <div class="spinner"></div>
-          <span id="loadingText">Scanning restaurants near you…</span>
+          <span id="loadingText">Finding your best match…</span>
         </div>
 
-        <div class="table-wrap">
-          <table class="results-table" id="resultsTable">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Restaurant</th>
-                <th>Cuisine</th>
-                <th>Mode</th>
-                <th>Distance</th>
-                <th>Time</th>
-                <th>Avg bill</th>
-                <th>Match</th>
-                <th>Map</th>
-                <th>Your rating</th>
-              </tr>
-            </thead>
-            <tbody id="resultsBody"></tbody>
-          </table>
+        <div id="pickArea">
+          <!-- The one confident recommendation -->
+          <div class="top-pick" id="topPick"></div>
+
+          <!-- Up to two fallbacks, in case the top pick doesn't land -->
+          <div class="alternates-wrap hidden" id="alternatesWrap">
+            <p class="alternates-label">Not feeling it? A couple of backups:</p>
+            <div class="alternates" id="alternates"></div>
+          </div>
+
+          <!-- Full list, hidden by default so it doesn't reintroduce choice overload -->
+          <button class="btn-link show-all" id="toggleAll">See all nearby options ▾</button>
+          <div class="table-wrap hidden" id="allWrap">
+            <table class="results-table" id="resultsTable">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Restaurant</th>
+                  <th>Cuisine</th>
+                  <th>Mode</th>
+                  <th>Distance</th>
+                  <th>Time</th>
+                  <th>Avg bill</th>
+                  <th>Match</th>
+                  <th>Map</th>
+                  <th>Your rating</th>
+                </tr>
+              </thead>
+              <tbody id="resultsBody"></tbody>
+            </table>
+          </div>
         </div>
+
         <p class="no-results hidden" id="noResults">No matching places found nearby. Try widening your preferences or picking a different starting point.</p>
         <p class="disclaimer">Travel time and average bill are estimates. Ratings you give are saved in your browser and quietly tune future suggestions toward what you like.</p>
       </section>

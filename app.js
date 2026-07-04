@@ -364,11 +364,15 @@ async function runRecommendation() {
   showStep('results');
 
   const loading = document.getElementById('loadingResults');
-  const table = document.getElementById('resultsTable');
   const noResults = document.getElementById('noResults');
   loading.classList.remove('hidden');
-  table.classList.add('hidden');
   noResults.classList.add('hidden');
+  // Reset the "see all" drawer to collapsed for each new search.
+  const allWrap = document.getElementById('allWrap');
+  const toggleAll = document.getElementById('toggleAll');
+  allWrap.classList.add('hidden');
+  toggleAll.classList.remove('hidden');
+  toggleAll.textContent = 'See all nearby options ▾';
 
   const { lat, lon } = state.location;
   let places, usedDemo = false;
@@ -398,12 +402,19 @@ async function runRecommendation() {
   loading.classList.add('hidden');
 
   if (top.length === 0) {
+    document.getElementById('pickArea').classList.add('hidden');
     noResults.classList.remove('hidden');
     return;
   }
+  document.getElementById('pickArea').classList.remove('hidden');
 
+  // Lead with one confident pick + up to two backups; full list stays hidden.
+  renderPick(ranked, min, range, wantDineIn);
   renderTable(top, max, range, min, wantDineIn);
-  table.classList.remove('hidden');
+
+  document.getElementById('resultsTitle').textContent = wantDineIn
+    ? "Here's the table we'd book"
+    : "Here's where we'd order from";
 
   const summary = document.getElementById('resultsSummary');
   const bits = [];
@@ -411,8 +422,110 @@ async function runRecommendation() {
   bits.push(wantDineIn ? 'dine-in' : 'take-away');
   if (state.cuisines.size) bits.push([...state.cuisines].map(c => CUISINE_LABELS[c]).join(', '));
   if (state.occasion) bits.push('for ' + occasionText(state.occasion));
-  summary.textContent = `Near ${state.location.label} · ${bits.join(' · ')}` +
+  summary.textContent = `Based on your mood · ${bits.join(' · ')} · near ${state.location.label}` +
     (usedDemo ? '  (showing sample data — live lookup unavailable)' : '');
+}
+
+/* Convert a raw score into a friendly 55-100 match percentage. */
+function matchPct(score, min, range) {
+  return Math.round(((score - min) / range) * 45 + 55);
+}
+
+const AMB_WORD = {
+  romantic: 'romantic', family: 'family-friendly', casual: 'laid-back',
+  lively: 'lively', finedining: 'fine-dining', outdoor: 'open-air', quiet: 'cozy',
+};
+
+/* Plain-language "why this one" so an undecided user can trust the pick. */
+function buildReason(p, wantDineIn) {
+  const parts = [];
+  if (state.cuisines.size && state.cuisines.has(p.cuisine)) {
+    parts.push(`it's the <strong>${p.cuisineLabel}</strong> you were craving`);
+  } else {
+    parts.push(`the <strong>${p.cuisineLabel}</strong> here fits your mood`);
+  }
+  if (state.veg <= 40 && p.vegScore <= 45) parts.push('it leans veg, like you wanted');
+  else if (state.veg >= 60 && p.vegScore >= 55) parts.push('there\'s plenty non-veg on the menu');
+
+  if (wantDineIn && state.ambience.size) {
+    const overlap = [...state.ambience].filter(a => p.ambience.has(a));
+    if (overlap.length) parts.push(`it has the ${AMB_WORD[overlap[0]] || overlap[0]} vibe you picked`);
+  }
+  if (state.occasion) parts.push(`it's right for ${occasionText(state.occasion)}`);
+  parts.push(wantDineIn
+    ? `and it's an easy <strong>${p.dist.toFixed(1)} km</strong> away`
+    : `and it's close by (<strong>${p.dist.toFixed(1)} km</strong>), so it'll arrive hot`);
+
+  // First clause capitalized, joined naturally.
+  const first = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+  const rest = parts.slice(1);
+  return 'Because ' + [first.charAt(0).toLowerCase() + first.slice(1), ...rest]
+    .join(', ').replace(/, and /, ' — and ') + '.';
+}
+
+/* Render the hero pick and up to two compact alternates. */
+function renderPick(ranked, min, range, wantDineIn) {
+  const hero = ranked[0];
+  const heroEl = document.getElementById('topPick');
+  const match = matchPct(hero.score, min, range);
+  const mapUrl = mapsLink(hero);
+  const modeBadge = wantDineIn
+    ? '<span class="badge dinein">Dine-in</span>'
+    : '<span class="badge order">Order in</span>';
+  const timeLabel = wantDineIn ? 'Reach in' : 'Ready in';
+  const ctaLabel = wantDineIn ? 'Get directions' : 'Find it on Maps';
+
+  heroEl.innerHTML = `
+    <div class="pick-badge">✨ Our pick for you</div>
+    <div class="pick-title">${escapeHtml(hero.name)}</div>
+    <div class="pick-tags">
+      <span class="badge">${hero.cuisineLabel}</span>
+      ${modeBadge}
+      <span class="badge">${match}% match</span>
+    </div>
+    <p class="pick-reason">${buildReason(hero, wantDineIn)}</p>
+    <div class="pick-stats">
+      <div class="pick-stat"><span class="stat-label">Distance</span><span class="stat-val">${hero.dist.toFixed(1)} km</span></div>
+      <div class="pick-stat"><span class="stat-label">${timeLabel}</span><span class="stat-val">~${hero.mins} min</span></div>
+      <div class="pick-stat"><span class="stat-label">Avg bill</span><span class="stat-val">₹${hero.bill}<span style="font-size:12px;font-weight:400;color:var(--muted)">/person</span></span></div>
+    </div>
+    <div class="pick-actions">
+      <a class="btn btn-primary" href="${mapUrl}" target="_blank" rel="noopener">${ctaLabel} ↗</a>
+      <div class="pick-rate">
+        <span class="rate-label">Ordered here? Rate it:</span>
+        <div class="stars" data-name="${escapeHtml(hero.name)}" data-cuisine="${hero.cuisine}"></div>
+      </div>
+    </div>`;
+  renderStars(heroEl.querySelector('.stars'), prefs.ratings[hero.name] || 0);
+
+  // Alternates
+  const alts = ranked.slice(1, 3);
+  const wrap = document.getElementById('alternatesWrap');
+  const altBox = document.getElementById('alternates');
+  altBox.innerHTML = '';
+  if (alts.length === 0) { wrap.classList.add('hidden'); return; }
+  wrap.classList.remove('hidden');
+  alts.forEach(p => {
+    const m = matchPct(p.score, min, range);
+    const card = document.createElement('div');
+    card.className = 'alt-card';
+    card.innerHTML = `
+      <div class="alt-head">
+        <span class="alt-name">${escapeHtml(p.name)}</span>
+        <span class="badge">${m}%</span>
+      </div>
+      <div class="alt-sub">${p.cuisineLabel} · ${p.dist.toFixed(1)} km · ~${p.mins} min · ₹${p.bill}</div>
+      <div class="alt-foot">
+        <a class="map-link" href="${mapsLink(p)}" target="_blank" rel="noopener">Open in Maps ↗</a>
+        <div class="stars" data-name="${escapeHtml(p.name)}" data-cuisine="${p.cuisine}"></div>
+      </div>`;
+    altBox.appendChild(card);
+    renderStars(card.querySelector('.stars'), prefs.ratings[p.name] || 0);
+  });
+}
+
+function mapsLink(p) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name)}%20${p.lat},${p.lon}`;
 }
 
 function occasionText(o) {
@@ -581,6 +694,12 @@ function init() {
     stepPos = 0;
     computeFlow();
     showStep('location');
+  });
+
+  document.getElementById('toggleAll').addEventListener('click', (e) => {
+    const wrap = document.getElementById('allWrap');
+    const open = wrap.classList.toggle('hidden') === false;
+    e.target.textContent = open ? 'Hide the full list ▴' : 'See all nearby options ▾';
   });
 
   document.getElementById('resetLearning').addEventListener('click', () => {
